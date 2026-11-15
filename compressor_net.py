@@ -77,6 +77,21 @@ class CompressorNet:
         """Count trainable parameters in a model"""
         return sum(p.numel() for p in model.parameters() if p.requires_grad)
     
+    def _count_stored_elements(self, obj: Any) -> int:
+        """Recursively count elements of all tensors stored in a nested structure.
+        
+        Used to compute an honest compressed size: every tensor that would
+        need to be kept to reconstruct the model is counted, including
+        tensors nested inside dicts.
+        """
+        if isinstance(obj, torch.Tensor):
+            return obj.numel()
+        if isinstance(obj, dict):
+            return sum(self._count_stored_elements(v) for v in obj.values())
+        if isinstance(obj, (list, tuple)):
+            return sum(self._count_stored_elements(v) for v in obj)
+        return 0
+    
     def compress(
         self,
         model: nn.Module,
@@ -105,14 +120,8 @@ class CompressorNet:
         compressed = self.algorithms[algorithm](model, **kwargs)
         compression_time = time.time() - start_time
         
-        # Get compressed size
-        if isinstance(compressed, dict):
-            compressed_size = sum(
-                v.numel() if isinstance(v, torch.Tensor) else 0
-                for v in compressed.values()
-            )
-        else:
-            compressed_size = 1  # Placeholder
+        # Get compressed size (count ALL stored tensors, including nested dicts)
+        compressed_size = self._count_stored_elements(compressed)
         
         # Calculate ratio
         compression_ratio = original_size / compressed_size if compressed_size > 0 else float('inf')
