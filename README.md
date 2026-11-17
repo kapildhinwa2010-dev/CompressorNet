@@ -1,69 +1,73 @@
 # CompressorNet
 
-[![CI](https://github.com/kapildhinwa2010-dev/CompressorNet/actions/workflows/ci.yml/badge.svg)](https://github.com/kapildhinwa2010-dev/CompressorNet/actions/workflows/ci.yml)
-[![CodeQL](https://github.com/kapildhinwa2010-dev/CompressorNet/actions/workflows/codeql.yml/badge.svg)](https://github.com/kapildhinwa2010-dev/CompressorNet/actions/workflows/codeql.yml)
+CompressorNet is an experimental Python prototype for applying several parameter transformations to a PyTorch model and comparing the number of tensor elements retained by those transformations. It is useful as a small API and algorithm demonstration, not as a validated model-compression or benchmarking system.
 
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
-[![PyTorch 2.0+](https://img.shields.io/badge/pytorch-2.0%2B-ee4c2c.svg)](https://pytorch.org/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://opensource.org/licenses/MIT)
+## Status
 
-Compare five neural-network compression algorithms on one API.
+Early-stage prototype. The implementation can calculate parameter counts and return transformed parameter dictionaries, but it does not provide a general model serializer, a decompressor, accuracy or reconstruction-quality evaluation, or a reliable measure of storage or inference savings. In particular, the reported compression ratio is based on tensor element counts, not bytes on disk or in memory.
 
-## What it does
+## Requirements
 
-CompressorNet implements pruning, quantization, SVD, Fourier features
-and DNA-style generator encoding behind one compress()/benchmark() API
-and reports size ratio and timing per algorithm.
+- Python 3.10 or newer
+- PyTorch 2.0 or newer
+- NumPy 1.24 or newer
 
-## Installation
+The source module can be run directly from a checkout. Install the declared dependencies and run its example:
 
-    pip install torch numpy pytest
+```bash
+python -m pip install -r requirements.txt
+python compressor_net.py
+```
+
+There is no separate command-line interface. `pyproject.toml` declares project metadata, but the implementation is a single root-level Python module; the commands above use that module in the checkout rather than relying on a packaged CLI.
 
 ## Usage
 
-    from compressor_net import CompressorNet
+Import the module from the repository root and pass a PyTorch model to `compress`:
 
-    compressor = CompressorNet()
-    result = compressor.compress(model, algorithm="svd", rank_ratio=0.5)
-    print(result.compression_ratio)
+```python
+import torch.nn as nn
+from compressor_net import CompressorNet
 
-    results = compressor.benchmark(model)
-    compressor.compare_algorithms(model)
+model = nn.Sequential(nn.Linear(16, 8))
+compressor = CompressorNet()
+result = compressor.compress(model, algorithm="svd", rank_ratio=0.5)
 
-## Algorithms
+print(result.original_size)
+print(result.compressed_size)
+print(result.compression_ratio)
+```
 
-- pruning (rate): zero smallest-magnitude weights
-- quantization (bits): lower-precision weights
-- svd (rank_ratio): low-rank factorization of 2-D matrices
-- fourier (num_freqs): Fourier-feature generator per matrix
-- dna (hidden_size): compact-MLP generator per matrix
+`compress` returns a `CompressionResult` with element counts, an elapsed compression time, a `decompression_time` field set to `0.0`, and a `quality_score` field set to `None`. The ratio is `original_size / compressed_size`; it should not be interpreted as a byte-level compression ratio or as evidence of preserved model behavior.
 
-## API
+The module also provides:
 
-- CompressorNet(device="cpu"): compress, benchmark, compare_algorithms
-- CompressionResult: compressed_size, original_size, compression_ratio,
-  compression_time, decompression_time, quality_score
+- `benchmark(model, algorithms=None)`, which calls `compress` for the selected algorithms (all five by default) and returns a mapping of names to results or `None` for caught failures.
+- `compare_algorithms(model, algorithms=None)`, which prints the element-count comparison.
+- `CompressionAlgorithm` and `CompressionResult` types.
 
-## Honest results and limitations
+Available algorithm names and parameters are `pruning` (`pruning_rate`, default `0.5`), `quantization` (`bits`, default `8`), `svd` (`rank_ratio`, default `0.5`), `fourier` (`num_freqs`, default `64`), and `dna` (`hidden_size`, default `128`).
 
-- Pruning, quantization and SVD are standard and behave as expected.
-- The fourier and dna entries are structural (they report param-count
-  ratios), not measured quality: no fine-tuning or accuracy evaluation
-  is included, so their "quality" column in any comparison is a
-  placeholder, not a result.
-- quality_score is None for algorithms without an explicit error
-  measure; the suite does not evaluate task accuracy at all.
-- Ratios for generator methods assume you keep only the generator;
-  that is only valid if you accept its reconstruction error.
+## What the implementation does—and does not do
 
-## Negative results (from the source experiments)
+- **Pruning:** applies a random mask to multidimensional parameters and returns dense tensors, rather than pruning the smallest-magnitude weights or storing a sparse representation. One-dimensional parameters are kept unchanged.
+- **Quantization:** rounds scaled parameter values but keeps the results as ordinary tensors; it does not pack values into a lower-bit storage format.
+- **SVD:** truncates a matrix's singular-value decomposition and immediately reconstructs a dense matrix. It does not retain compact factors as the compressed representation.
+- **Fourier:** creates a random projection matrix and stores mean Fourier features for two-dimensional parameters; other parameters are retained. No fitting, reconstruction, or quality evaluation is implemented.
+- **DNA:** stores a random tensor, a scalar, and the mean of each parameter tensor. `hidden_size` is recorded as metadata; there is no trained generator or decoding path.
 
-- The reserv.dean-part-2 log records that generator-based compression
-  (fourier/dna) did not reconstruct trained weights acceptably without
-  per-layer fitting, and the related carrier-mode recall failed about
-  half of noise trials. The robust design kept in the toolkit is the
-  Reed-Solomon slot lattice (ECC-Memory).
+Consequently, the element counts for Fourier and DNA do not establish that their representations can reconstruct a model or preserve its predictions. Compression timing is recorded for the transformation only; decompression time and quality are not measured. The module does not evaluate accuracy, reconstruction error, inference speed, or serialized file size. Results can also depend on random masks or projections.
+
+## Tests
+
+Run the test suite from the repository root:
+
+```bash
+python -m pytest -q tests
+```
+
+On the reviewed commit, this command completed with **15 passed**. The repository also defines a GitHub Actions workflow that runs tests and an import check on Python 3.10, 3.11, and 3.12; this statement describes the workflow configuration, not the status of a remote CI run.
 
 ## License
 
-MIT - see [LICENSE](LICENSE).
+The repository includes an MIT License. See [LICENSE](LICENSE) for its full terms and the copyright notice.
